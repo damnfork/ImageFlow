@@ -33,13 +33,25 @@ const (
 	MetadataStoreTypeDefault = MetadataStoreTypeRedis
 )
 
+// AuthType defines the authentication method
+type AuthType string
+
+const (
+	// AuthTypeAPIKey represents API key authentication (legacy)
+	AuthTypeAPIKey AuthType = "api_key"
+	// AuthTypeOIDC represents OIDC authentication
+	AuthTypeOIDC AuthType = "oidc"
+	// AuthTypeDefault is the default auth type
+	AuthTypeDefault = AuthTypeOIDC
+)
+
 // Config stores the application configuration
 type Config struct {
 	// Server settings
 	ServerAddr      string `json:"server_addr"`     // Server listen address
 	ImageBasePath   string `json:"image_base_path"` // Base path for image storage
 	AvifSupport     bool   `json:"avif_support"`    // Whether AVIF format is supported
-	APIKey          string // API key for authentication
+	APIKey          string // API key for authentication (legacy, deprecated)
 	MaxUploadCount  int    `json:"max_upload_count"` // Maximum number of images allowed in single upload
 	ImageQuality    int    `json:"image_quality"`    // Image conversion quality (1-100)
 	WorkerThreads   int    `json:"worker_threads"`   // Number of parallel worker threads
@@ -47,6 +59,17 @@ type Config struct {
 	WorkerPoolSize  int    `json:"worker_pool_size"` // Size of worker pool for concurrent image processing
 	DebugMode       bool   `json:"debug_mode"`       // Whether debug mode is enabled
 	CleanupInterval int    `json:"cleanup_interval"` // Interval in minutes for cleaning expired images
+
+	// Authentication settings
+	AuthType AuthType `json:"auth_type"` // Type of authentication to use
+
+	// OIDC settings
+	OIDCIssuer       string   `json:"oidc_issuer"`       // OIDC provider issuer URL
+	OIDCClientID     string   `json:"-"`                 // OIDC client ID
+	OIDCClientSecret string   `json:"-"`                 // OIDC client secret
+	OIDCRedirectURL  string   `json:"oidc_redirect_url"` // OIDC redirect URL
+	OIDCScopes       []string `json:"oidc_scopes"`       // OIDC scopes to request
+	JWTSigningKey    string   `json:"-"`                 // JWT signing key for session tokens
 
 	// Storage settings
 	StorageType  StorageType `json:"storage_type"`  // Type of storage backend to use
@@ -117,6 +140,12 @@ func Load() (*Config, error) {
 		DebugMode:       false,              // Default debug mode off
 		CleanupInterval: 1,                  // Default cleanup interval: 1 minute
 
+		// Auth defaults
+		AuthType: AuthTypeDefault, // Default to OIDC auth
+
+		// OIDC defaults
+		OIDCScopes: []string{"openid", "profile", "email"}, // Default OIDC scopes
+
 		// Metadata store defaults
 		MetadataStoreType: MetadataStoreTypeDefault,
 
@@ -177,6 +206,37 @@ func (c *Config) loadEnvVars() {
 	if debug := os.Getenv("DEBUG_MODE"); debug != "" {
 		c.DebugMode = debug == "true"
 	}
+
+	// Auth settings
+	if authType := os.Getenv("AUTH_TYPE"); authType != "" {
+		switch authType {
+		case "api_key":
+			c.AuthType = AuthTypeAPIKey
+		case "oidc":
+			c.AuthType = AuthTypeOIDC
+		default:
+			fmt.Printf("Warning: Invalid auth type specified (%s), using default OIDC\n", authType)
+			c.AuthType = AuthTypeDefault
+		}
+	}
+
+	// OIDC settings
+	if issuer := os.Getenv("OIDC_ISSUER"); issuer != "" {
+		c.OIDCIssuer = issuer
+	}
+	c.OIDCClientID = os.Getenv("OIDC_CLIENT_ID")
+	c.OIDCClientSecret = os.Getenv("OIDC_CLIENT_SECRET")
+	if redirectURL := os.Getenv("OIDC_REDIRECT_URL"); redirectURL != "" {
+		c.OIDCRedirectURL = redirectURL
+	}
+	if scopes := os.Getenv("OIDC_SCOPES"); scopes != "" {
+		c.OIDCScopes = strings.Split(scopes, ",")
+		// Trim spaces
+		for i, scope := range c.OIDCScopes {
+			c.OIDCScopes[i] = strings.TrimSpace(scope)
+		}
+	}
+	c.JWTSigningKey = os.Getenv("JWT_SIGNING_KEY")
 
 	// Storage settings
 	if storageType := os.Getenv("STORAGE_TYPE"); storageType != "" {

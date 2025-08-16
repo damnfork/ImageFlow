@@ -64,8 +64,10 @@ func ListImagesHandler(cfg *config.Config) http.HandlerFunc {
 			}
 		}()
 
-		// Validate API key
-		if !validateAPIKey(w, r, cfg.APIKey) {
+		// Get user from context (set by RequireAuth middleware)
+		user, ok := GetUserFromContext(r.Context())
+		if !ok {
+			errors.HandleError(w, errors.ErrUnauthorized, "Authentication required", nil)
 			return
 		}
 
@@ -94,7 +96,7 @@ func ListImagesHandler(cfg *config.Config) http.HandlerFunc {
 		} else {
 			// Cache miss, get from Redis
 			var err error
-			allImages, err = listImagesFromRedis(r.Context(), params, cfg)
+			allImages, err = listImagesFromRedis(r.Context(), params, user, cfg)
 			if err != nil {
 				logger.Error("Failed to list images from Redis", zap.Error(err))
 				errors.HandleError(w, errors.ErrImageList, "Failed to retrieve image list", err)
@@ -233,38 +235,58 @@ func parseQueryParams(r *http.Request) queryParams {
 }
 
 // listImagesFromRedis retrieves images from Redis with optimized queries
-func listImagesFromRedis(ctx context.Context, params queryParams, cfg *config.Config) ([]ImageInfo, error) {
+func listImagesFromRedis(ctx context.Context, params queryParams, user *utils.User, cfg *config.Config) ([]ImageInfo, error) {
 	if !utils.IsRedisMetadataStore() {
 		return nil, fmt.Errorf("redis is not enabled")
 	}
 
-	// Get image IDs based on criteria
+	// For OIDC users, get user-specific images
+	// For API key users, get all images (backward compatibility)
 	var imageIDs []string
 	var err error
 
-	// Use pipeline for tag and ID retrieval
-	pipe := utils.RedisClient.Pipeline()
-	var tagCmd *redis.StringSliceCmd
-	var idsCmd *redis.StringSliceCmd
+	if cfg.AuthType == config.AuthTypeOIDC && user.ID != "api_key_user" {
+		// Get user-specific images
+		userImagesKey := utils.RedisPrefix + "user:" + user.ID + ":images"
+		imageIDs, err = utils.RedisClient.ZRevRange(ctx, userImagesKey, 0, -1).Result()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user images: %v", err)
+		}
 
-	if params.tag != "" {
-		// Get images by tag
-		tagCmd = pipe.SMembers(ctx, utils.RedisPrefix+"tag:"+params.tag)
+		// If tag filtering is requested, filter user's images by tag
+		if params.tag != "" {
+			taggedImageIDs, err := utils.RedisClient.SMembers(ctx, utils.RedisPrefix+"tag:"+params.tag).Result()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get tagged images: %v", err)
+			}
+
+			// Find intersection of user images and tagged images
+			taggedSet := make(map[string]bool)
+			for _, id := range taggedImageIDs {
+				taggedSet[id] = true
+			}
+
+			var filteredIDs []string
+			for _, id := range imageIDs {
+				if taggedSet[id] {
+					filteredIDs = append(filteredIDs, id)
+				}
+			}
+			imageIDs = filteredIDs
+		}
 	} else {
-		// Get all image IDs from sorted set
-		idsCmd = pipe.ZRevRange(ctx, utils.RedisPrefix+"images", 0, -1)
-	}
+		// Legacy behavior for API key users
+		if params.tag != "" {
+			// Get images by tag
+			imageIDs, err = utils.RedisClient.SMembers(ctx, utils.RedisPrefix+"tag:"+params.tag).Result()
+		} else {
+			// Get all image IDs from sorted set
+			imageIDs, err = utils.RedisClient.ZRevRange(ctx, utils.RedisPrefix+"images", 0, -1).Result()
+		}
 
-	_, err = pipe.Exec(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get image IDs: %v", err)
-	}
-
-	// Get results from commands
-	if params.tag != "" {
-		imageIDs = tagCmd.Val()
-	} else {
-		imageIDs = idsCmd.Val()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get image IDs: %v", err)
+		}
 	}
 
 	if len(imageIDs) == 0 {
@@ -275,7 +297,7 @@ func listImagesFromRedis(ctx context.Context, params queryParams, cfg *config.Co
 	images := make([]ImageInfo, 0, len(imageIDs))
 
 	// Use pipeline to get metadata for all images
-	pipe = utils.RedisClient.Pipeline()
+	pipe := utils.RedisClient.Pipeline()
 	metadataCommands := make(map[string]*redis.MapStringStringCmd, len(imageIDs))
 
 	for _, id := range imageIDs {

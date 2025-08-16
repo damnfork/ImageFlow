@@ -219,6 +219,7 @@ func (rms *RedisMetadataStore) SaveMetadata(ctx context.Context, metadata *Image
 	key := rms.prefix + metadata.ID
 	pipe.HSet(ctx, key, map[string]interface{}{
 		"id":           metadata.ID,
+		"userID":       metadata.UserID,
 		"originalName": metadata.OriginalName,
 		"uploadTime":   metadata.UploadTime.Format(time.RFC3339),
 		"expiryTime":   metadata.ExpiryTime.Format(time.RFC3339),
@@ -228,6 +229,15 @@ func (rms *RedisMetadataStore) SaveMetadata(ctx context.Context, metadata *Image
 		"paths":        string(pathsJSON),
 		"sizes":        string(sizesJSON),
 	})
+
+	// Add to user-specific image index
+	if metadata.UserID != "" {
+		userImagesKey := RedisPrefix + "user:" + metadata.UserID + ":images"
+		pipe.ZAdd(ctx, userImagesKey, redis.Z{
+			Score:  float64(metadata.UploadTime.Unix()),
+			Member: metadata.ID,
+		})
+	}
 
 	// Add to sorted set for pagination
 	pipe.ZAdd(ctx, RedisPrefix+"images", redis.Z{
@@ -293,6 +303,7 @@ func (rms *RedisMetadataStore) GetMetadata(ctx context.Context, id string) (*Ima
 
 	metadata := &ImageMetadata{
 		ID:           data["id"],
+		UserID:       data["userID"],
 		OriginalName: data["originalName"],
 		Format:       data["format"],
 		Orientation:  data["orientation"],
@@ -443,31 +454,31 @@ func GetImagesByMultipleTags(ctx context.Context, tags []string) ([]string, erro
 	if !IsRedisMetadataStore() {
 		return nil, fmt.Errorf("redis is not enabled")
 	}
-	
+
 	if len(tags) == 0 {
 		return []string{}, nil
 	}
-	
+
 	if len(tags) == 1 {
 		// Single tag, use existing function
 		return GetImagesByTag(ctx, tags[0])
 	}
-	
+
 	// Multiple tags - use Redis SET intersection
 	tagKeys := make([]string, len(tags))
 	for i, tag := range tags {
 		tagKeys[i] = RedisPrefix + "tag:" + tag
 	}
-	
+
 	imageIDs, err := RedisClient.SInter(ctx, tagKeys...).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get images by multiple tags from Redis: %v", err)
 	}
-	
+
 	logger.Debug("Retrieved images with multiple tags",
 		zap.Strings("tags", tags),
 		zap.Int("count", len(imageIDs)))
-	
+
 	return imageIDs, nil
 }
 
@@ -476,40 +487,40 @@ func GetAllImageIDs(ctx context.Context) ([]string, error) {
 	if !IsRedisMetadataStore() {
 		return nil, fmt.Errorf("redis is not enabled")
 	}
-	
+
 	// Use SCAN to get all metadata keys
 	pattern := RedisPrefix + "metadata:*"
 	var allKeys []string
 	var cursor uint64
-	
+
 	for {
 		keys, newCursor, err := RedisClient.Scan(ctx, cursor, pattern, 100).Result()
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan Redis keys: %v", err)
 		}
-		
+
 		allKeys = append(allKeys, keys...)
 		cursor = newCursor
-		
+
 		if cursor == 0 {
 			break
 		}
 	}
-	
+
 	// Extract image IDs from metadata keys
 	imageIDs := make([]string, 0, len(allKeys))
 	metadataPrefix := RedisPrefix + "metadata:"
-	
+
 	for _, key := range allKeys {
 		if strings.HasPrefix(key, metadataPrefix) {
 			id := strings.TrimPrefix(key, metadataPrefix)
 			imageIDs = append(imageIDs, id)
 		}
 	}
-	
+
 	logger.Debug("Retrieved all image IDs from Redis",
 		zap.Int("count", len(imageIDs)))
-	
+
 	return imageIDs, nil
 }
 
@@ -628,4 +639,55 @@ func GetCachedPage(ctx context.Context, key CachedPageKey) (*PageCache, error) {
 // SetCachedPage stores page data in cache
 func SetCachedPage(ctx context.Context, key CachedPageKey, data []ImageInfo) error {
 	return setCachedPage(ctx, key, data)
+}
+
+// GetUserMetadata retrieves all metadata for a specific user from Redis
+func (rms *RedisMetadataStore) GetUserMetadata(ctx context.Context, userID string) ([]*ImageMetadata, error) {
+	if !IsRedisMetadataStore() {
+		return nil, fmt.Errorf("redis not enabled")
+	}
+
+	// Get all image IDs for the user
+	userImagesKey := RedisPrefix + "user:" + userID + ":images"
+	imageIDs, err := RedisClient.ZRevRange(ctx, userImagesKey, 0, -1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user images from Redis: %v", err)
+	}
+
+	var userMetadata []*ImageMetadata
+	for _, imageID := range imageIDs {
+		metadata, err := rms.GetMetadata(ctx, imageID)
+		if err != nil {
+			logger.Warn("Failed to get metadata for user image",
+				zap.String("user_id", userID),
+				zap.String("image_id", imageID),
+				zap.Error(err))
+			continue
+		}
+
+		userMetadata = append(userMetadata, metadata)
+	}
+
+	logger.Info("Retrieved user metadata entries from Redis",
+		zap.String("user_id", userID),
+		zap.Int("count", len(userMetadata)))
+	return userMetadata, nil
+}
+
+// VerifyImageOwnership verifies that a user owns an image in Redis
+func (rms *RedisMetadataStore) VerifyImageOwnership(ctx context.Context, imageID, userID string) error {
+	if !IsRedisMetadataStore() {
+		return fmt.Errorf("redis not enabled")
+	}
+
+	metadata, err := rms.GetMetadata(ctx, imageID)
+	if err != nil {
+		return fmt.Errorf("failed to get image metadata: %v", err)
+	}
+
+	if metadata.UserID != userID {
+		return fmt.Errorf("user %s does not own image %s", userID, imageID)
+	}
+
+	return nil
 }

@@ -31,7 +31,7 @@ type RandomQueryParams struct {
 // parseRandomQueryParams extracts and validates query parameters
 func parseRandomQueryParams(r *http.Request) *RandomQueryParams {
 	params := &RandomQueryParams{}
-	
+
 	// Parse tags - support both single tag and multiple tags
 	if tagStr := r.URL.Query().Get("tag"); tagStr != "" {
 		params.Tags = strings.Split(tagStr, ",")
@@ -48,7 +48,7 @@ func parseRandomQueryParams(r *http.Request) *RandomQueryParams {
 			}
 		}
 	}
-	
+
 	// Parse exclude tags
 	if excludeStr := r.URL.Query().Get("exclude"); excludeStr != "" {
 		params.ExcludeTags = strings.Split(excludeStr, ",")
@@ -56,16 +56,16 @@ func parseRandomQueryParams(r *http.Request) *RandomQueryParams {
 			params.ExcludeTags[i] = strings.TrimSpace(tag)
 		}
 	}
-	
+
 	// Parse orientation
 	params.Orientation = strings.ToLower(r.URL.Query().Get("orientation"))
 	if params.Orientation != "portrait" && params.Orientation != "landscape" {
 		params.Orientation = "" // Will be auto-detected
 	}
-	
+
 	// Parse format preference
 	params.Format = strings.ToLower(r.URL.Query().Get("format"))
-	
+
 	return params
 }
 
@@ -76,26 +76,26 @@ func matchesTags(imageTags []string, requiredTags []string, excludeTags []string
 	for _, tag := range imageTags {
 		imageTagMap[tag] = true
 	}
-	
+
 	// Check if image has any excluded tags
 	for _, excludeTag := range excludeTags {
 		if imageTagMap[excludeTag] {
 			return false
 		}
 	}
-	
+
 	// If no required tags specified, and no excluded tags matched, it's valid
 	if len(requiredTags) == 0 {
 		return true
 	}
-	
+
 	// Check if image has ALL required tags (AND logic)
 	for _, requiredTag := range requiredTags {
 		if !imageTagMap[requiredTag] {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -189,11 +189,11 @@ func RandomImageHandler(s3Client *s3.Client, cfg *config.Config) http.HandlerFun
 
 		// Parse query parameters
 		params := parseRandomQueryParams(r)
-		
+
 		// Determine device type and orientation
 		deviceType := utils.DetectDeviceType(r)
 		orientation := determineOrientation(r, deviceType)
-		
+
 		// Override orientation if specified in params
 		if params.Orientation != "" {
 			orientation = params.Orientation
@@ -212,7 +212,7 @@ func RandomImageHandler(s3Client *s3.Client, cfg *config.Config) http.HandlerFun
 		// Use Redis for efficient filtering if available and tags are specified
 		if (len(params.Tags) > 0 || len(params.ExcludeTags) > 0) && utils.IsRedisMetadataStore() {
 			var candidateIDs []string
-			
+
 			if len(params.Tags) > 0 {
 				// Get images that have ALL required tags
 				candidateIDs, err = utils.GetImagesByMultipleTags(context.Background(), params.Tags)
@@ -227,7 +227,7 @@ func RandomImageHandler(s3Client *s3.Client, cfg *config.Config) http.HandlerFun
 					logger.Error("Failed to get all image IDs from Redis", zap.Error(err))
 				}
 			}
-			
+
 			if err == nil && len(candidateIDs) > 0 {
 				// Filter by metadata
 				for _, id := range candidateIDs {
@@ -235,18 +235,18 @@ func RandomImageHandler(s3Client *s3.Client, cfg *config.Config) http.HandlerFun
 					if metaErr != nil {
 						continue
 					}
-					
+
 					// Check tag matching
 					if !matchesTags(metadata.Tags, params.Tags, params.ExcludeTags) {
 						continue
 					}
-					
+
 					// Check orientation
 					if metadata.Orientation == orientation {
 						matchingImages = append(matchingImages, metadata.Paths.Original)
 					}
 				}
-				
+
 				logger.Info("Found matching images from Redis",
 					zap.Int("count", len(matchingImages)))
 			}
@@ -256,28 +256,28 @@ func RandomImageHandler(s3Client *s3.Client, cfg *config.Config) http.HandlerFun
 		if len(matchingImages) == 0 {
 			// Build prefix for orientation directory
 			prefix := fmt.Sprintf("original/%s/", orientation)
-			
+
 			output, err := s3Client.ListObjectsV2(context.Background(), &s3.ListObjectsV2Input{
 				Bucket: aws.String(cfg.S3Bucket),
 				Prefix: aws.String(prefix),
 			})
-			
+
 			if err != nil {
 				logger.Error("Failed to list objects from S3", zap.Error(err))
 				errors.HandleError(w, errors.ErrInternal, "Failed to list images", err)
 				return
 			}
-			
+
 			// Filter images based on criteria
 			for _, obj := range output.Contents {
 				if !utils.IsImageFile(*obj.Key) {
 					continue
 				}
-				
+
 				// Extract ID for metadata lookup
 				fileBaseName := filepath.Base(*obj.Key)
 				id := strings.TrimSuffix(fileBaseName, filepath.Ext(fileBaseName))
-				
+
 				// Get metadata for tag filtering
 				if len(params.Tags) > 0 || len(params.ExcludeTags) > 0 {
 					metadata, metaErr := utils.MetadataManager.GetMetadata(context.Background(), id)
@@ -285,15 +285,15 @@ func RandomImageHandler(s3Client *s3.Client, cfg *config.Config) http.HandlerFun
 						// Skip if metadata not found
 						continue
 					}
-					
+
 					if !matchesTags(metadata.Tags, params.Tags, params.ExcludeTags) {
 						continue
 					}
 				}
-				
+
 				matchingImages = append(matchingImages, *obj.Key)
 			}
-			
+
 			logger.Info("Found matching images from S3 listing",
 				zap.Int("count", len(matchingImages)))
 		}
@@ -337,13 +337,13 @@ func RandomImageHandler(s3Client *s3.Client, cfg *config.Config) http.HandlerFun
 		// Try preferred format first
 		imageKey := getFormattedImagePath(bestFormat, orientation, filename)
 		contentType := getContentType(bestFormat, imageKey)
-		
+
 		// Try to serve the preferred format
 		data, err := s3Client.GetObject(r.Context(), &s3.GetObjectInput{
 			Bucket: aws.String(cfg.S3Bucket),
 			Key:    aws.String(imageKey),
 		})
-		
+
 		if err != nil {
 			// Fall back to original if preferred format not available
 			logger.Info("Preferred format not available, falling back to original",
@@ -367,14 +367,14 @@ func serveS3Image(s3Client *s3.Client, cfg *config.Config, w http.ResponseWriter
 		Bucket: aws.String(cfg.S3Bucket),
 		Key:    aws.String(key),
 	})
-	
+
 	if err != nil {
 		logger.Error("Failed to get image from S3", zap.String("key", key), zap.Error(err))
 		errors.HandleError(w, errors.ErrNotFound, "Image not found", err)
 		return
 	}
 	defer data.Body.Close()
-	
+
 	setImageResponseHeaders(w, contentType)
 	if _, err := io.Copy(w, data.Body); err != nil {
 		logger.Error("Failed to send image", zap.Error(err))
@@ -386,14 +386,14 @@ func LocalRandomImageHandler(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Parse query parameters
 		params := parseRandomQueryParams(r)
-		
+
 		// Determine device type and orientation
 		deviceType := utils.DetectDeviceType(r)
 		orientation := "landscape" // Default for desktop
 		if deviceType == utils.DeviceMobile {
 			orientation = "portrait" // Mobile gets portrait
 		}
-		
+
 		// Override orientation if specified in params
 		if params.Orientation != "" {
 			orientation = params.Orientation
@@ -412,7 +412,7 @@ func LocalRandomImageHandler(cfg *config.Config) http.HandlerFunc {
 		// Use Redis for efficient filtering if available and filters are specified
 		if (len(params.Tags) > 0 || len(params.ExcludeTags) > 0) && utils.IsRedisMetadataStore() {
 			var candidateIDs []string
-			
+
 			if len(params.Tags) > 0 {
 				// Get images that have ALL required tags
 				candidateIDs, err = utils.GetImagesByMultipleTags(context.Background(), params.Tags)
@@ -426,7 +426,7 @@ func LocalRandomImageHandler(cfg *config.Config) http.HandlerFunc {
 					logger.Error("Failed to get all image IDs from Redis", zap.Error(err))
 				}
 			}
-			
+
 			if err == nil && len(candidateIDs) > 0 {
 				// Filter by metadata
 				for _, id := range candidateIDs {
@@ -434,18 +434,18 @@ func LocalRandomImageHandler(cfg *config.Config) http.HandlerFunc {
 					if metaErr != nil {
 						continue
 					}
-					
+
 					// Check tag matching
 					if !matchesTags(metadata.Tags, params.Tags, params.ExcludeTags) {
 						continue
 					}
-					
+
 					// Check orientation
 					if metadata.Orientation == orientation {
 						matchingImages = append(matchingImages, metadata)
 					}
 				}
-				
+
 				logger.Info("Found matching images from Redis",
 					zap.Int("count", len(matchingImages)))
 			}
@@ -471,9 +471,9 @@ func LocalRandomImageHandler(cfg *config.Config) http.HandlerFunc {
 				if file.IsDir() || !utils.IsImageFile(file.Name()) {
 					continue
 				}
-				
+
 				id := strings.TrimSuffix(file.Name(), filepath.Ext(file.Name()))
-				
+
 				// Apply tag filtering if specified
 				if len(params.Tags) > 0 || len(params.ExcludeTags) > 0 {
 					metadata, metaErr := utils.MetadataManager.GetMetadata(context.Background(), id)
@@ -481,11 +481,11 @@ func LocalRandomImageHandler(cfg *config.Config) http.HandlerFunc {
 						// Skip if metadata not available
 						continue
 					}
-					
+
 					if !matchesTags(metadata.Tags, params.Tags, params.ExcludeTags) {
 						continue
 					}
-					
+
 					matchingImages = append(matchingImages, metadata)
 				} else {
 					// No tag filtering, create basic metadata
@@ -502,7 +502,7 @@ func LocalRandomImageHandler(cfg *config.Config) http.HandlerFunc {
 					})
 				}
 			}
-			
+
 			logger.Info("Found matching images from directory scan",
 				zap.Int("count", len(matchingImages)))
 		}
@@ -565,7 +565,7 @@ func LocalRandomImageHandler(cfg *config.Config) http.HandlerFunc {
 				imagePath = filepath.Join(cfg.ImageBasePath, selectedImage.Paths.Original)
 				contentType = getContentType(FormatOriginal, imagePath)
 			}
-			
+
 			logger.Debug("Using format and path",
 				zap.String("format", bestFormat),
 				zap.String("path", imagePath))

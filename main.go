@@ -118,6 +118,16 @@ func main() {
 		logger.Fatal("Failed to initialize metadata store", zap.Error(err))
 	}
 
+	// Initialize OIDC provider
+	if err := utils.InitOIDCProvider(cfg); err != nil {
+		logger.Fatal("Failed to initialize OIDC provider", zap.Error(err))
+	}
+
+	// Initialize user store
+	if err := utils.InitUserStore(cfg); err != nil {
+		logger.Fatal("Failed to initialize user store", zap.Error(err))
+	}
+
 	// Ensure image directories exist
 	ensureDirectories(cfg)
 
@@ -129,16 +139,29 @@ func main() {
 	configureMIMETypes()
 
 	// Create routes
-	http.HandleFunc("/api/validate-api-key", handlers.ValidateAPIKey(cfg))
-	http.HandleFunc("/api/upload", handlers.RequireAPIKey(cfg, handlers.UploadHandler(cfg)))
-	http.HandleFunc("/api/images", handlers.RequireAPIKey(cfg, handlers.ListImagesHandler(cfg)))
-	http.HandleFunc("/api/delete-image", handlers.RequireAPIKey(cfg, handlers.DeleteImageHandler(cfg)))
-	http.HandleFunc("/api/config", handlers.RequireAPIKey(cfg, handlers.ConfigHandler(cfg)))
-	http.HandleFunc("/api/tags", handlers.RequireAPIKey(cfg, handlers.TagsHandler(cfg)))
-	http.HandleFunc("/api/debug/tags", handlers.RequireAPIKey(cfg, handlers.DebugTagsHandler(cfg)))
+
+	// Authentication routes
+	if cfg.AuthType == config.AuthTypeOIDC {
+		// OIDC authentication routes
+		http.HandleFunc("/auth/login", handlers.OIDCLoginHandler(cfg))
+		http.HandleFunc("/auth/callback", handlers.OIDCCallbackHandler(cfg))
+		http.HandleFunc("/auth/logout", handlers.LogoutHandler(cfg))
+		http.HandleFunc("/api/profile", handlers.RequireAuth(cfg, handlers.UserProfileHandler(cfg)))
+	} else {
+		// Legacy API Key validation
+		http.HandleFunc("/api/validate-api-key", handlers.ValidateAPIKey(cfg))
+	}
+
+	// Protected API routes (work with both auth types)
+	http.HandleFunc("/api/upload", handlers.RequireAuth(cfg, handlers.UploadHandler(cfg)))
+	http.HandleFunc("/api/images", handlers.RequireAuth(cfg, handlers.ListImagesHandler(cfg)))
+	http.HandleFunc("/api/delete-image", handlers.RequireAuth(cfg, handlers.DeleteImageHandler(cfg)))
+	http.HandleFunc("/api/config", handlers.RequireAuth(cfg, handlers.ConfigHandler(cfg)))
+	http.HandleFunc("/api/tags", handlers.RequireAuth(cfg, handlers.TagsHandler(cfg)))
+	http.HandleFunc("/api/debug/tags", handlers.RequireAuth(cfg, handlers.DebugTagsHandler(cfg)))
 
 	// Add cleanup trigger endpoint
-	http.HandleFunc("/api/trigger-cleanup", handlers.RequireAPIKey(cfg, func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/api/trigger-cleanup", handlers.RequireAuth(cfg, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return

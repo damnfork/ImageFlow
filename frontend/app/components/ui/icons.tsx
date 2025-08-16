@@ -10,6 +10,7 @@ import {
   Eye as EyeOpenIcon,
   Search as MagnifyingGlassIcon,
   KeyRound as LockClosedIcon,
+  LogIn as LoginIcon,
   Unlink as LinkBreak2Icon,
   ArrowRight as ArrowRightIcon,
   ArrowDown as ArrowDownIcon,
@@ -77,6 +78,7 @@ export {
   EyeOpenIcon, // 查看图标
   MagnifyingGlassIcon, // 搜索图标
   LockClosedIcon, // 锁定图标
+  LoginIcon, // 登录图标
   LinkBreak2Icon, // 链接断开图标
   ArrowRightIcon, // 右箭头图标
   ArrowDownIcon, // 下箭头图标

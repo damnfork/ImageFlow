@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Inter, Noto_Sans_SC } from "next/font/google";
+import Script from 'next/script';
 import "./globals.css";
+import { AuthProvider } from './contexts/AuthContext';
 
 // Configure Inter font
 const inter = Inter({
@@ -50,19 +52,20 @@ export default function RootLayout({
           <div className="bubble"></div>
         </div>
 
-        {children}
+        <AuthProvider>
+          {children}
+        </AuthProvider>
 
         {/* 页脚 */}
         <div className="max-w-7xl mx-auto px-6 mt-8 text-center text-gray-600 dark:text-gray-400">
-          Create By{" "}
-          <a
-            href="https://catcat.blog/"
-            target="_blank"
-            className="text-indigo-500 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300 transition-colors"
-          >
-            猫猫博客
-          </a>
         </div>
+
+        {/* 监控脚本 - 网站统计分析 */}
+        <Script 
+          src="https://p.dd.kg/script.js"
+          data-website-id="1705671c-af07-4f72-a4d4-b32bbbabbf52"
+          strategy="afterInteractive"
+        />
       </body>
     </html>
   );

@@ -19,14 +19,15 @@ import (
 
 // ImageMetadata stores metadata information for images
 type ImageMetadata struct {
-	ID           string              `json:"id"`           // Image ID (without extension)
-	OriginalName string              `json:"originalName"` // Original filename
-	UploadTime   time.Time           `json:"uploadTime"`   // Upload timestamp
-	ExpiryTime   time.Time           `json:"expiryTime"`   // Expiry timestamp (if set)
-	Format       string              `json:"format"`       // Original format
-	Orientation  string              `json:"orientation"`  // Image orientation
-	Tags         []string            `json:"tags"`         // Image tags for categorization
-	Sizes        map[string]int64    `json:"sizes"`        // File sizes for different formats
+	ID           string           `json:"id"`           // Image ID (without extension)
+	UserID       string           `json:"user_id"`      // User ID who owns this image
+	OriginalName string           `json:"originalName"` // Original filename
+	UploadTime   time.Time        `json:"uploadTime"`   // Upload timestamp
+	ExpiryTime   time.Time        `json:"expiryTime"`   // Expiry timestamp (if set)
+	Format       string           `json:"format"`       // Original format
+	Orientation  string           `json:"orientation"`  // Image orientation
+	Tags         []string         `json:"tags"`         // Image tags for categorization
+	Sizes        map[string]int64 `json:"sizes"`        // File sizes for different formats
 	Paths        struct {
 		Original string `json:"original"` // Path to original image
 		WebP     string `json:"webp"`     // Path to WebP format
@@ -38,9 +39,12 @@ type ImageMetadata struct {
 type MetadataStore interface {
 	SaveMetadata(ctx context.Context, metadata *ImageMetadata) error
 	GetMetadata(ctx context.Context, id string) (*ImageMetadata, error)
+	GetUserMetadata(ctx context.Context, userID string) ([]*ImageMetadata, error)
 	ListExpiredImages(ctx context.Context) ([]*ImageMetadata, error)
 	DeleteMetadata(ctx context.Context, id string) error
 	GetAllMetadata(ctx context.Context) ([]*ImageMetadata, error)
+	// Verify user ownership of an image
+	VerifyImageOwnership(ctx context.Context, imageID, userID string) error
 }
 
 // LocalMetadataStore implements metadata storage for local filesystem
@@ -143,6 +147,41 @@ func (lms *LocalMetadataStore) ListExpiredImages(ctx context.Context) ([]*ImageM
 func (lms *LocalMetadataStore) DeleteMetadata(ctx context.Context, id string) error {
 	metadataPath := filepath.Join(lms.BasePath, "metadata", id+".json")
 	return os.Remove(metadataPath)
+}
+
+// GetUserMetadata retrieves all metadata for a specific user
+func (lms *LocalMetadataStore) GetUserMetadata(ctx context.Context, userID string) ([]*ImageMetadata, error) {
+	allMetadata, err := lms.GetAllMetadata(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var userMetadata []*ImageMetadata
+	for _, metadata := range allMetadata {
+		if metadata.UserID == userID {
+			userMetadata = append(userMetadata, metadata)
+		}
+	}
+
+	logger.Info("Retrieved user metadata entries",
+		zap.String("user_id", userID),
+		zap.Int("count", len(userMetadata)),
+		zap.String("storage", "local"))
+	return userMetadata, nil
+}
+
+// VerifyImageOwnership verifies that a user owns an image
+func (lms *LocalMetadataStore) VerifyImageOwnership(ctx context.Context, imageID, userID string) error {
+	metadata, err := lms.GetMetadata(ctx, imageID)
+	if err != nil {
+		return fmt.Errorf("failed to get image metadata: %v", err)
+	}
+
+	if metadata.UserID != userID {
+		return fmt.Errorf("user %s does not own image %s", userID, imageID)
+	}
+
+	return nil
 }
 
 // GetAllMetadata retrieves all image metadata from local storage
@@ -284,6 +323,40 @@ func (sms *S3MetadataStore) ListExpiredImages(ctx context.Context) ([]*ImageMeta
 func (sms *S3MetadataStore) DeleteMetadata(ctx context.Context, id string) error {
 	key := sms.prefix + id + ".json"
 	return sms.client.Delete(ctx, key)
+}
+
+// GetUserMetadata retrieves all metadata for a specific user from S3
+func (s3ms *S3MetadataStore) GetUserMetadata(ctx context.Context, userID string) ([]*ImageMetadata, error) {
+	allMetadata, err := s3ms.GetAllMetadata(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var userMetadata []*ImageMetadata
+	for _, metadata := range allMetadata {
+		if metadata.UserID == userID {
+			userMetadata = append(userMetadata, metadata)
+		}
+	}
+
+	logger.Info("Retrieved user metadata entries from S3",
+		zap.String("user_id", userID),
+		zap.Int("count", len(userMetadata)))
+	return userMetadata, nil
+}
+
+// VerifyImageOwnership verifies that a user owns an image in S3
+func (s3ms *S3MetadataStore) VerifyImageOwnership(ctx context.Context, imageID, userID string) error {
+	metadata, err := s3ms.GetMetadata(ctx, imageID)
+	if err != nil {
+		return fmt.Errorf("failed to get image metadata: %v", err)
+	}
+
+	if metadata.UserID != userID {
+		return fmt.Errorf("user %s does not own image %s", userID, imageID)
+	}
+
+	return nil
 }
 
 // GetAllMetadata retrieves all image metadata from S3

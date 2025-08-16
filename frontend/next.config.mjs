@@ -49,6 +49,22 @@ const nextConfig = {
     remotePatterns: remotePatterns
   },
   optimizeFonts: true,
+  // 开发环境API代理配置
+  async rewrites() {
+    if (isStaticExport) {
+      return [];
+    }
+    return [
+      {
+        source: '/api/:path*',
+        destination: 'http://localhost:8686/api/:path*',
+      },
+      {
+        source: '/auth/:path*',
+        destination: 'http://localhost:8686/auth/:path*',
+      },
+    ];
+  },
   env: {
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || '',
     NEXT_PUBLIC_REMOTE_PATTERNS: process.env.NEXT_PUBLIC_REMOTE_PATTERNS || '',

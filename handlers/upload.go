@@ -9,7 +9,6 @@ import (
 	_ "image/png"
 	"mime/multipart"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -117,11 +116,24 @@ func processImage(ctx *uploadContext, fileHeader *multipart.FileHeader) UploadRe
 		}
 	}
 
+	// Create user storage paths manager
+	userPaths := utils.NewUserStoragePaths(ctx.user.ID, ctx.cfg)
+
+	// Ensure user directories exist
+	if err := userPaths.EnsureUserDirectories(); err != nil {
+		return UploadResult{
+			Filename: fileHeader.Filename,
+			Status:   "error",
+			Message:  fmt.Sprintf("Error creating user directories: %v", err),
+		}
+	}
+
+	// Generate storage paths using user-specific paths
 	var originalKey string
 	if imgFormat.Format == "gif" {
-		originalKey = filepath.Join("gif", filename+imgFormat.Extension)
+		originalKey = userPaths.GetGIFPath(filename + imgFormat.Extension)
 	} else {
-		originalKey = filepath.Join("original", orientation, filename+imgFormat.Extension)
+		originalKey = userPaths.GetOriginalPath(filename+imgFormat.Extension, orientation)
 	}
 
 	if err := utils.Storage.Store(ctx.r.Context(), originalKey, data); err != nil {
@@ -159,7 +171,7 @@ func processImage(ctx *uploadContext, fileHeader *multipart.FileHeader) UploadRe
 				return
 			}
 
-			webpKey := filepath.Join(orientation, "webp", filename+".webp")
+			webpKey := userPaths.GetWebPPath(filename, orientation)
 			if err := utils.Storage.Store(ctx.r.Context(), webpKey, webpData); err != nil {
 				logger.Error("Failed to store WebP image",
 					zap.String("key", webpKey),
@@ -190,7 +202,7 @@ func processImage(ctx *uploadContext, fileHeader *multipart.FileHeader) UploadRe
 				return
 			}
 
-			avifKey := filepath.Join(orientation, "avif", filename+".avif")
+			avifKey := userPaths.GetAVIFPath(filename, orientation)
 			if err := utils.Storage.Store(ctx.r.Context(), avifKey, avifData); err != nil {
 				logger.Error("Failed to store AVIF image",
 					zap.String("key", avifKey),
@@ -237,6 +249,7 @@ func processImage(ctx *uploadContext, fileHeader *multipart.FileHeader) UploadRe
 
 	metadata := &utils.ImageMetadata{
 		ID:           imageID,
+		UserID:       ctx.user.ID,
 		OriginalName: fileHeader.Filename,
 		UploadTime:   time.Now(),
 		Format:       imgFormat.Format,
@@ -249,13 +262,13 @@ func processImage(ctx *uploadContext, fileHeader *multipart.FileHeader) UploadRe
 		metadata.ExpiryTime = ctx.expiryTime
 	}
 
-	// Set paths
+	// Set paths using user-specific paths
 	metadata.Paths.Original = originalKey
 	if webpURL != originalURL {
-		metadata.Paths.WebP = filepath.Join(orientation, "webp", imageID+".webp")
+		metadata.Paths.WebP = userPaths.GetWebPPath(imageID, orientation)
 	}
 	if avifURL != originalURL {
-		metadata.Paths.AVIF = filepath.Join(orientation, "avif", imageID+".avif")
+		metadata.Paths.AVIF = userPaths.GetAVIFPath(imageID, orientation)
 	}
 
 	// Set file sizes - always store the actual sizes
@@ -302,6 +315,7 @@ func processImage(ctx *uploadContext, fileHeader *multipart.FileHeader) UploadRe
 
 type uploadContext struct {
 	r          *http.Request
+	user       *utils.User
 	expiryTime time.Time
 	tags       []string
 	cfg        *config.Config
@@ -312,6 +326,13 @@ func UploadHandler(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			errors.HandleError(w, errors.ErrInvalidParam, "方法不允许", nil)
+			return
+		}
+
+		// Get user from context (set by RequireAuth middleware)
+		user, ok := GetUserFromContext(r.Context())
+		if !ok {
+			errors.HandleError(w, errors.ErrUnauthorized, "用户未认证", nil)
 			return
 		}
 
@@ -373,6 +394,7 @@ func UploadHandler(cfg *config.Config) http.HandlerFunc {
 
 		ctx := &uploadContext{
 			r:          r,
+			user:       user,
 			expiryTime: expiryTime,
 			tags:       tags,
 			cfg:        cfg,

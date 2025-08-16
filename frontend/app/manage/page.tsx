@@ -4,9 +4,9 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 import { motion } from "framer-motion";
 import Masonry from "react-masonry-css";
-import { getApiKey, validateApiKey, setApiKey } from "../utils/auth";
 import { api } from "../utils/request";
-import ApiKeyModal from "../components/ApiKeyModal";
+import { useAuth } from "../contexts/AuthContext";
+import OIDCLoginModal from "../components/OIDCLoginModal";
 import ImageFilters from "../components/ImageFilters";
 import ImageCard from "../components/ImageCard";
 import ImageModal from "../components/ImageModal";
@@ -23,7 +23,8 @@ import { ImageIcon, Spinner } from "../components/ui/icons";
 
 export default function Manage() {
   useTheme(); 
-  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const [showLoginModal, setShowLoginModal] = useState(false);
   const [images, setImages] = useState<ImageFile[]>([]);
   const [selectedImage, setSelectedImage] = useState<ImageFile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -37,7 +38,7 @@ export default function Manage() {
     tag: "",
   });
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isKeyVerified, setIsKeyVerified] = useState(false);
+
   const [isFetchingMore, setIsFetchingMore] = useState(false);
   const observer = useRef<IntersectionObserver | null>(null);
   const lastImageElementRef = useCallback(
@@ -54,42 +55,12 @@ export default function Manage() {
     [isLoading, isFetchingMore, hasMore]
   );
 
+  // 当用户认证状态改变时获取图片
   useEffect(() => {
-    checkApiKey();
-  }, []);
-
-  const checkApiKey = async () => {
-    const apiKey = getApiKey();
-    if (!apiKey) {
-      setShowApiKeyModal(true);
-      setIsKeyVerified(false);
-      return;
-    }
-
-    try {
-      const isValid = await validateApiKey(apiKey);
-      if (!isValid) {
-        setShowApiKeyModal(true);
-        setIsKeyVerified(false);
-        setStatus({
-          type: "error",
-          message: "API Key无效,请重新验证",
-        });
-        return;
-      }
-
-      setIsKeyVerified(true);
+    if (isAuthenticated) {
       fetchImages();
-    } catch (error) {
-      console.error("API Key验证失败:", error);
-      setShowApiKeyModal(true);
-      setIsKeyVerified(false);
-      setStatus({
-        type: "error",
-        message: "API Key验证失败,请重试",
-      });
     }
-  };
+  }, [isAuthenticated]);
 
   const fetchImages = async () => {
     try {
@@ -197,12 +168,56 @@ export default function Manage() {
     setFilters({ format, orientation, tag });
   };
 
+  // 如果正在加载认证状态，显示加载界面
+  if (authLoading) {
+    return (
+      <div className="max-w-7xl mx-auto px-6 py-8 flex items-center justify-center min-h-96">
+        <div className="text-center">
+          <div className="w-12 h-12 animate-spin rounded-full border-4 border-gray-300 border-t-indigo-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">正在加载...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // 如果未认证，显示登录提示
+  if (!isAuthenticated) {
+    return (
+      <div className="max-w-7xl mx-auto px-6 py-8">
+        <Header onLoginClick={() => setShowLoginModal(true)} title="图片管理" />
+        <div className="text-center py-20">
+          <div className="max-w-md mx-auto">
+            <div className="w-24 h-24 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-6">
+              <ImageIcon className="w-12 h-12 text-white" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
+              请先登录
+            </h2>
+            <p className="text-gray-600 dark:text-gray-400 mb-8">
+              您需要登录后才能查看和管理图片
+            </p>
+            <button
+              onClick={() => setShowLoginModal(true)}
+              className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-medium rounded-xl hover:from-indigo-600 hover:to-purple-700 transition-all duration-200"
+            >
+              立即登录
+            </button>
+          </div>
+        </div>
+        <OIDCLoginModal
+          isOpen={showLoginModal}
+          onClose={() => setShowLoginModal(false)}
+          showApiKeyFallback={true}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-7xl mx-auto px-6 py-8">
       <Header
-        onApiKeyClick={() => setShowApiKeyModal(true)}
-        title="ImageFlow"
-        isKeyVerified={isKeyVerified}
+        onLoginClick={() => setShowLoginModal(true)}
+        title="图片管理"
       />
 
       <ToastContainer />
@@ -328,15 +343,10 @@ export default function Manage() {
         onDelete={handleDelete}
       />
 
-      <ApiKeyModal
-        isOpen={showApiKeyModal}
-        onClose={() => setShowApiKeyModal(false)}
-        onSuccess={(apiKey) => {
-          setApiKey(apiKey);
-          setIsKeyVerified(true);
-          setShowApiKeyModal(false);
-          fetchImages();
-        }}
+      <OIDCLoginModal
+        isOpen={showLoginModal}
+        onClose={() => setShowLoginModal(false)}
+        showApiKeyFallback={true}
       />
     </div>
   );

@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { getApiKey, validateApiKey, setApiKey } from './utils/auth'
 import { api } from './utils/request'
-import ApiKeyModal from './components/ApiKeyModal'
+import OIDCLoginModal from './components/OIDCLoginModal'
 import { UploadResponse, StatusMessage as StatusMessageType, ConfigSettings } from './types'
+import { useAuth } from './contexts/AuthContext'
 import Header from './components/Header'
 import UploadSection from './components/UploadSection'
 import StatusMessage from './components/StatusMessage'
@@ -17,14 +17,14 @@ import { ImageIcon, PlusCircledIcon } from './components/ui/icons'
 const DEFAULT_MAX_UPLOAD_COUNT = 10;
 
 export default function Home() {
-  const [showApiKeyModal, setShowApiKeyModal] = useState(false)
+  const { isAuthenticated, isLoading, user } = useAuth()
+  const [showLoginModal, setShowLoginModal] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [status, setStatus] = useState<StatusMessageType | null>(null)
   const [uploadResults, setUploadResults] = useState<UploadResponse['results']>([])
   const [showResultSidebar, setShowResultSidebar] = useState(false)
   const [showPreviewSidebar, setShowPreviewSidebar] = useState(false)
-  const [isKeyVerified, setIsKeyVerified] = useState(false)
   const [maxUploadCount, setMaxUploadCount] = useState(DEFAULT_MAX_UPLOAD_COUNT)
   const [fileDetails, setFileDetails] = useState<{ id: string, file: File }[]>([])
   const [selectedTags, setSelectedTags] = useState<string[]>([])
@@ -47,30 +47,20 @@ export default function Home() {
     }
   }, [fileDetails])
 
+  // 检查认证状态并显示登录提示
   useEffect(() => {
-    const checkApiKey = async () => {
-      const apiKey = getApiKey()
-      if (!apiKey) {
-        setShowApiKeyModal(true)
-        setIsKeyVerified(false)
-        return
-      }
-
-      const isValid = await validateApiKey(apiKey)
-      if (!isValid) {
-        setShowApiKeyModal(true)
-        setIsKeyVerified(false)
-        setStatus({
-          type: 'error',
-          message: 'API Key无效,请重新验证'
-        })
-      } else {
-        setIsKeyVerified(true)
-      }
+    if (!isLoading && !isAuthenticated) {
+      setShowLoginModal(true)
+    } else if (isAuthenticated && user) {
+      setStatus({
+        type: 'success',
+        message: `欢迎回来，${user.name || user.email}！`
+      })
+      // 3秒后清除欢迎消息
+      const timer = setTimeout(() => setStatus(null), 3000)
+      return () => clearTimeout(timer)
     }
-
-    checkApiKey()
-  }, [])
+  }, [isLoading, isAuthenticated, user])
 
   useEffect(() => {
     // 获取配置
@@ -95,9 +85,8 @@ export default function Home() {
     
     if (selectedFiles.length === 0) return
 
-    const apiKey = getApiKey()
-    if (!apiKey) {
-      setShowApiKeyModal(true)
+    if (!isAuthenticated) {
+      setShowLoginModal(true)
       return
     }
 
@@ -273,23 +262,61 @@ export default function Home() {
   // 计算主内容的样式，根据侧边栏是否打开调整内容区域
   const mainContentStyle = { margin: '0 auto' };
 
+  // 如果正在加载认证状态，显示加载界面
+  if (isLoading) {
+    return (
+      <div className="max-w-4xl mx-auto px-6 py-8 flex items-center justify-center min-h-96">
+        <div className="text-center">
+          <div className="w-12 h-12 animate-spin rounded-full border-4 border-gray-300 border-t-indigo-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">正在加载...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-4xl mx-auto px-6 py-8" style={mainContentStyle}>
-      <Header onApiKeyClick={() => setShowApiKeyModal(true)} isKeyVerified={isKeyVerified} />
+      <Header onLoginClick={() => setShowLoginModal(true)} />
 
-      <UploadSection
-        onUpload={handleUpload}
-        isUploading={isUploading}
-        maxUploadCount={maxUploadCount}
-        onFilesSelected={handleFilesSelected}
-        onTogglePreview={togglePreviewSidebar}
-        isPreviewOpen={showPreviewSidebar}
-        fileCount={fileDetails.length}
-        existingFiles={fileDetails}
-        expiryMinutes={expiryMinutes}
-        setExpiryMinutes={setExpiryMinutes}
-        onTagsChange={handleTagsChange}
-      />
+      {isAuthenticated ? (
+        <UploadSection
+          onUpload={handleUpload}
+          isUploading={isUploading}
+          maxUploadCount={maxUploadCount}
+          onFilesSelected={handleFilesSelected}
+          onTogglePreview={togglePreviewSidebar}
+          isPreviewOpen={showPreviewSidebar}
+          fileCount={fileDetails.length}
+          existingFiles={fileDetails}
+          expiryMinutes={expiryMinutes}
+          setExpiryMinutes={setExpiryMinutes}
+          onTagsChange={handleTagsChange}
+        />
+      ) : (
+        // 未登录用户显示登录提示
+        <div className="text-center py-20">
+          <div className="max-w-md mx-auto">
+            <div className="w-24 h-24 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-6">
+              <ImageIcon className="w-12 h-12 text-white" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
+              欢迎使用 ImageFlow
+            </h2>
+            <p className="text-gray-600 dark:text-gray-400 mb-8">
+              请先登录以开始上传和管理您的图片
+            </p>
+            <button
+              onClick={() => setShowLoginModal(true)}
+              className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-medium rounded-xl hover:from-indigo-600 hover:to-purple-700 transition-all duration-200"
+            >
+              立即登录
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 状态消息 */}
+      {status && <StatusMessage type={status.type} message={status.message} />}
 
       {/* 只有在有上传结果且结果侧边栏关闭时显示 */}
       {uploadResults.length > 0 && !showResultSidebar && (
@@ -346,18 +373,10 @@ export default function Home() {
         isUploading={isUploading}
       />
 
-      <ApiKeyModal
-        isOpen={showApiKeyModal}
-        onClose={() => setShowApiKeyModal(false)}
-        onSuccess={(apiKey) => {
-          setApiKey(apiKey)
-          setShowApiKeyModal(false)
-          setIsKeyVerified(true)
-          setStatus({
-            type: 'success',
-            message: 'API Key验证成功！'
-          })
-        }}
+      <OIDCLoginModal
+        isOpen={showLoginModal}
+        onClose={() => setShowLoginModal(false)}
+        showApiKeyFallback={true}
       />
     </div>
   )

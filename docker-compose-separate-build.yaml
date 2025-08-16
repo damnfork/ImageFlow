@@ -68,7 +68,7 @@ services:
       - imageflow-network
 
   redis:
-    image: redis:alpine
+    image: redis:latest
     container_name: imageflow-redis
     ports:
       - "6379:6379"

@@ -105,3 +105,44 @@ export interface ConfigSettings {
   compressionEffort?: number;
   forceLossless?: boolean;
 }
+
+// OIDC用户类型
+export interface OIDCUser {
+  id: string;
+  email: string;
+  name: string;
+  picture?: string;
+  provider: string;
+  created_at: string;
+  updated_at: string;
+  last_login: string;
+  is_active: boolean;
+}
+
+// 认证响应类型
+export interface AuthResponse {
+  token: string;
+  user: OIDCUser;
+  expires_at: number;
+}
+
+// 认证状态类型
+export type AuthType = "api_key" | "oidc";
+
+// 认证上下文类型
+export interface AuthContextType {
+  user: OIDCUser | null;
+  token: string | null;
+  authType: AuthType;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  login: () => Promise<void>;
+  logout: () => void;
+  refreshToken: () => Promise<void>;
+}
+
+// OIDC登录响应
+export interface OIDCLoginResponse {
+  auth_url: string;
+  state: string;
+}

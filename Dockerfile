@@ -1,4 +1,4 @@
-FROM golang:1.22-alpine AS backend-builder
+FROM golang:1.23-alpine AS backend-builder
 ENV GO111MODULE=on
 WORKDIR /app
 RUN apk add --no-cache git gcc musl-dev vips-dev libheif-dev

@@ -42,6 +42,13 @@ func DeleteImageHandler(cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Get user from context (set by RequireAuth middleware)
+		user, ok := GetUserFromContext(r.Context())
+		if !ok {
+			errors.HandleError(w, errors.ErrUnauthorized, "Authentication required", nil)
+			return
+		}
+
 		// Parse the request body
 		var req DeleteRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -60,7 +67,20 @@ func DeleteImageHandler(cfg *config.Config) http.HandlerFunc {
 
 		logger.Info("Processing delete request",
 			zap.String("image_id", req.ID),
+			zap.String("user_id", user.ID),
 			zap.String("storage_type", string(cfg.StorageType)))
+
+		// Verify image ownership (except for API key users)
+		if cfg.AuthType == config.AuthTypeOIDC && user.ID != "api_key_user" {
+			if err := utils.MetadataManager.VerifyImageOwnership(r.Context(), req.ID, user.ID); err != nil {
+				errors.HandleError(w, errors.ErrForbidden, "You don't have permission to delete this image", nil)
+				logger.Warn("User attempted to delete image they don't own",
+					zap.String("user_id", user.ID),
+					zap.String("image_id", req.ID),
+					zap.Error(err))
+				return
+			}
+		}
 
 		var success bool
 		var message string

@@ -31,6 +31,7 @@ services:
     volumes:
       - ./static/images:/app/static/images
       - ./config:/app/config
+      - .env:/app/.env
     restart: unless-stopped
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8686/", "||", "exit", "1" ]
@@ -39,7 +40,7 @@ services:
       retries: 3
 
   redis:
-    image: redis:alpine
+    image: redis:latest
     ports:
       - "6379:6379"
     volumes:

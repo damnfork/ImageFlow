@@ -1,4 +1,5 @@
 import { getApiKey } from "./auth";
+import { oidcAuth } from './oidc-auth';
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string>;
@@ -11,6 +12,29 @@ interface ConfigResponse {
 
 let BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
 let hasInitialized = false;
+
+// 获取认证头
+function getAuthHeaders(): Record<string, string> {
+  // 优先使用OIDC认证
+  if (oidcAuth.isAuthenticated()) {
+    try {
+      return oidcAuth.getAuthHeader();
+    } catch (error) {
+      console.warn('Failed to get OIDC auth header:', error);
+    }
+  }
+  
+  // 回退到API Key认证
+  const apiKey = getApiKey();
+  if (apiKey) {
+    return {
+      'Authorization': `Bearer ${apiKey}`
+    };
+  }
+  
+  // 没有认证信息
+  return {};
+}
 
 async function initializeBaseUrl() {
   try {
@@ -33,8 +57,6 @@ export async function request<T>(
     hasInitialized = true;
   }
 
-  const apiKey = getApiKey();
-
   const { params, ...restOptions } = options;
 
   // 构建URL
@@ -46,9 +68,12 @@ export async function request<T>(
     }
   }
 
+  // 获取认证头
+  const authHeaders = getAuthHeaders();
+  
   // 添加认证头
   const headers = {
-    Authorization: `Bearer ${apiKey}`,
+    ...authHeaders,
     ...options.headers,
   };
 
