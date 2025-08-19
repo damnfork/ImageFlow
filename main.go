@@ -53,8 +53,15 @@ func corsMiddleware(next http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Origin", "*")
 			}
 		} else {
-			// Set wildcard for all origins
-			w.Header().Set("Access-Control-Allow-Origin", allowedOrigins)
+			// When using wildcard, we need to handle credentials properly
+			if origin != "" {
+				// Return the specific origin to support credentials
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			} else {
+				// No origin header, use wildcard for simple requests
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
 		}
 
 		// Set other CORS headers
@@ -142,11 +149,12 @@ func main() {
 
 	// Authentication routes
 	if cfg.AuthType == config.AuthTypeOIDC {
-		// OIDC authentication routes
-		http.HandleFunc("/auth/login", handlers.OIDCLoginHandler(cfg))
-		http.HandleFunc("/auth/callback", handlers.OIDCCallbackHandler(cfg))
-		http.HandleFunc("/auth/logout", handlers.LogoutHandler(cfg))
-		http.HandleFunc("/api/profile", handlers.RequireAuth(cfg, handlers.UserProfileHandler(cfg)))
+		// OIDC authentication routes (all under /api for consistency)
+		http.HandleFunc("/api/auth/login", handlers.OIDCLoginHandler(cfg))
+		http.HandleFunc("/auth/callback", handlers.OIDCCallbackHandler(cfg))        // Keep for backward compatibility
+		http.HandleFunc("/api/auth/callback", handlers.OIDCCallbackAPIHandler(cfg)) // New API endpoint
+		http.HandleFunc("/api/auth/logout", handlers.LogoutHandler(cfg))
+		http.HandleFunc("/api/auth/profile", handlers.RequireAuth(cfg, handlers.UserProfileHandler(cfg)))
 	} else {
 		// Legacy API Key validation
 		http.HandleFunc("/api/validate-api-key", handlers.ValidateAPIKey(cfg))

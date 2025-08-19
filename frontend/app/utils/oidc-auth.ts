@@ -77,11 +77,12 @@ export class OIDCAuthManager {
   // OIDC登录流程
   public async initiateLogin(): Promise<void> {
     try {
-      const response = await fetch(`${BASE_URL}/auth/login`, {
+      const response = await fetch(`${BASE_URL}/api/auth/login`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include', // 确保可以接收和发送cookie
       });
 
       if (!response.ok) {
@@ -90,10 +91,8 @@ export class OIDCAuthManager {
 
       const data: OIDCLoginResponse = await response.json();
       
-      // 保存状态用于验证
-      localStorage.setItem('oidc_state', data.state);
-      
-      // 重定向到OIDC提供者
+      // state已由后端通过HttpOnly cookie保存，前端无需存储
+      // 直接重定向到OIDC提供者
       window.location.href = data.auth_url;
     } catch (error) {
       console.error('OIDC login initiation failed:', error);
@@ -103,21 +102,21 @@ export class OIDCAuthManager {
 
   // 处理OIDC回调
   public async handleCallback(code: string, state: string): Promise<AuthResponse> {
-    // 验证状态参数
-    const storedState = localStorage.getItem('oidc_state');
-    if (!storedState || storedState !== state) {
-      throw new Error('Invalid state parameter');
-    }
-
-    // 清除存储的状态
-    localStorage.removeItem('oidc_state');
-
+    // 后端会验证state参数（通过HttpOnly cookie），前端只需要发送即可
+    // 移除前端localStorage验证，避免与后端cookie验证冲突
+    
     try {
-      const response = await fetch(`${BASE_URL}/auth/callback?code=${code}&state=${state}`, {
-        method: 'GET',
+      // 通过POST API发送code和state给后端处理，包含cookies用于state验证
+      const response = await fetch(`${BASE_URL}/api/auth/callback`, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include', // 确保包含cookie
+        body: JSON.stringify({
+          code: code,
+          state: state,
+        }),
       });
 
       if (!response.ok) {
@@ -144,7 +143,7 @@ export class OIDCAuthManager {
       const token = this.getToken();
       if (token) {
         // 调用后端登出接口
-        await fetch(`${BASE_URL}/auth/logout`, {
+        await fetch(`${BASE_URL}/api/auth/logout`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -170,7 +169,7 @@ export class OIDCAuthManager {
     }
 
     try {
-      const response = await fetch(`${BASE_URL}/api/profile`, {
+      const response = await fetch(`${BASE_URL}/api/auth/profile`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

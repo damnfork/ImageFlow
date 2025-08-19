@@ -1,0 +1,71 @@
+# ImageFlow Caddy配置文件
+# 提供统一的入口点，API请求代理到后端，其他请求代理到前端
+
+{
+  # 全局配置
+  auto_https off
+  admin off
+}
+
+# 监听80端口
+:80 {
+  # API路由代理到后端
+  handle /api/* {
+    reverse_proxy backend:8686 {
+      # 健康检查
+      health_uri /api/config
+      health_interval 30s
+      health_timeout 10s
+      
+      # 传递真实IP
+      header_up Host {host}
+      header_up X-Real-IP {remote_host}
+      header_up X-Forwarded-For {remote_host}
+      header_up X-Forwarded-Proto {scheme}
+    }
+  }
+  
+  # 静态图片资源也代理到后端（因为图片存储在后端）
+  handle /images/* {
+    reverse_proxy backend:8686 {
+      # 健康检查
+      health_uri /api/config
+      health_interval 30s
+      health_timeout 10s
+      
+      # 传递真实IP
+      header_up Host {host}
+      header_up X-Real-IP {remote_host}
+      header_up X-Forwarded-For {remote_host}
+      header_up X-Forwarded-Proto {scheme}
+    }
+  }
+  
+  # 所有其他请求代理到前端
+  handle {
+    reverse_proxy frontend:3000 {
+      # 健康检查
+      health_uri /
+      health_interval 30s
+      health_timeout 10s
+      
+      # 传递真实IP
+      header_up Host {host}
+      header_up X-Real-IP {remote_host}
+      header_up X-Forwarded-For {remote_host}
+      header_up X-Forwarded-Proto {scheme}
+    }
+  }
+  
+  # 日志配置
+  log {
+    output stdout
+    format json
+    level INFO
+  }
+  
+  # 错误处理
+  handle_errors {
+    respond "服务暂时不可用，请稍后重试" 503
+  }
+}

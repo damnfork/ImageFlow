@@ -139,6 +139,11 @@ export interface AuthContextType {
   login: () => Promise<void>;
   logout: () => void;
   refreshToken: () => Promise<void>;
+  // Setter functions for manual state updates (used in OIDC callback)
+  setUser: (user: OIDCUser | null) => void;
+  setToken: (token: string | null) => void;
+  setAuthType: (type: AuthType) => void;
+  setIsAuthenticated: (authenticated: boolean) => void;
 }
 
 // OIDC登录响应

@@ -38,7 +38,7 @@ const parseRemotePatterns = (patterns) => {
   });
 };
 
-const remotePatterns = parseRemotePatterns(process.env.NEXT_PUBLIC_REMOTE_PATTERNS);
+const remotePatterns = parseRemotePatterns(process.env.NEXT_PUBLIC_REMOTE_PATTERNS || 'localhost');
 
 const nextConfig = {
   reactStrictMode: true,
@@ -58,10 +58,6 @@ const nextConfig = {
       {
         source: '/api/:path*',
         destination: 'http://localhost:8686/api/:path*',
-      },
-      {
-        source: '/auth/:path*',
-        destination: 'http://localhost:8686/auth/:path*',
       },
     ];
   },

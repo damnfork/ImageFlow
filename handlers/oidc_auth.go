@@ -188,6 +188,141 @@ func OIDCCallbackHandler(cfg *config.Config) http.HandlerFunc {
 	}
 }
 
+// OIDCCallbackRequest represents the callback request from frontend
+type OIDCCallbackRequest struct {
+	Code  string `json:"code"`
+	State string `json:"state"`
+}
+
+// OIDCCallbackAPIHandler handles OIDC callback via POST API from frontend
+func OIDCCallbackAPIHandler(cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if cfg.AuthType != config.AuthTypeOIDC {
+			errors.HandleError(w, errors.ErrInvalidParam, "OIDC authentication not enabled", nil)
+			logger.Warn("OIDC callback attempted but OIDC auth is not enabled")
+			return
+		}
+
+		if utils.OIDCClient == nil || !utils.OIDCClient.Initialized {
+			errors.WriteError(w, errors.ErrServerError)
+			logger.Error("OIDC client not initialized during callback")
+			return
+		}
+
+		// Parse JSON request body
+		var callbackReq OIDCCallbackRequest
+		if err := json.NewDecoder(r.Body).Decode(&callbackReq); err != nil {
+			errors.HandleError(w, errors.ErrInvalidParam, "Invalid request body", err.Error())
+			logger.Warn("Invalid callback request body", zap.Error(err))
+			return
+		}
+
+		if callbackReq.Code == "" {
+			errors.HandleError(w, errors.ErrInvalidParam, "Authorization code is required", nil)
+			logger.Warn("No authorization code in OIDC callback request")
+			return
+		}
+
+		if callbackReq.State == "" {
+			errors.HandleError(w, errors.ErrInvalidParam, "State parameter is required", nil)
+			logger.Warn("No state parameter in OIDC callback request")
+			return
+		}
+
+		// Verify state parameter against cookie (same as GET callback for consistency)
+		stateCookie, err := r.Cookie("oidc_state")
+		if err != nil {
+			errors.HandleError(w, errors.ErrInvalidParam, "Missing state cookie", err.Error())
+			logger.Warn("Missing OIDC state cookie in API callback",
+				zap.String("provided_state", callbackReq.State),
+				zap.Error(err))
+			return
+		}
+
+		if stateCookie.Value != callbackReq.State {
+			errors.HandleError(w, errors.ErrInvalidParam, "Invalid state parameter", nil)
+			logger.Warn("Invalid state parameter in OIDC API callback",
+				zap.String("provided_state", callbackReq.State),
+				zap.String("expected_state", stateCookie.Value))
+			return
+		}
+
+		// Clear the state cookie
+		http.SetCookie(w, &http.Cookie{
+			Name:     "oidc_state",
+			Value:    "",
+			Path:     "/",
+			Expires:  time.Now().Add(-1 * time.Hour),
+			HttpOnly: true,
+		})
+
+		// Exchange code for token
+		token, err := utils.OIDCClient.ExchangeCodeForToken(r.Context(), callbackReq.Code)
+		if err != nil {
+			errors.WriteError(w, errors.ErrServerError)
+			logger.Error("Failed to exchange authorization code",
+				zap.String("code", callbackReq.Code),
+				zap.Error(err))
+			return
+		}
+
+		// Extract user info from ID token
+		userInfo, err := utils.OIDCClient.ExtractUserInfo(r.Context(), token)
+		if err != nil {
+			errors.WriteError(w, errors.ErrServerError)
+			logger.Error("Failed to extract user info from token", zap.Error(err))
+			return
+		}
+
+		// Create or update user
+		user, err := utils.CreateOrUpdateUser(r.Context(), userInfo, "oidc")
+		if err != nil {
+			errors.WriteError(w, errors.ErrServerError)
+			logger.Error("Failed to create or update user",
+				zap.String("user_id", userInfo.Sub),
+				zap.String("email", userInfo.Email),
+				zap.Error(err))
+			return
+		}
+
+		// Generate JWT for session
+		sessionToken, err := utils.OIDCClient.GenerateJWT(user)
+		if err != nil {
+			errors.WriteError(w, errors.ErrServerError)
+			logger.Error("Failed to generate JWT token",
+				zap.String("user_id", user.ID),
+				zap.Error(err))
+			return
+		}
+
+		// Calculate expiry time (24 hours from now)
+		expiresAt := time.Now().Add(24 * time.Hour).Unix()
+
+		// Return success response
+		response := LoginResponse{
+			Token:     sessionToken,
+			User:      user,
+			ExpiresAt: expiresAt,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			logger.Error("Failed to encode login response", zap.Error(err))
+			return
+		}
+
+		logger.Info("User logged in successfully via OIDC API",
+			zap.String("user_id", user.ID),
+			zap.String("email", user.Email),
+			zap.String("provider", user.Provider))
+	}
+}
+
 // LogoutHandler handles user logout
 func LogoutHandler(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

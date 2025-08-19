@@ -91,25 +91,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
-  // 处理OIDC回调
-  const handleOIDCCallback = async (code: string, state: string) => {
-    try {
-      const authResponse = await oidcAuth.handleCallback(code, state);
-      
-      setUser(authResponse.user);
-      setToken(authResponse.token);
-      setAuthType('oidc');
-      setIsAuthenticated(true);
-      
-      // 清除URL中的查询参数
-      window.history.replaceState({}, document.title, window.location.pathname);
-      
-      return true;
-    } catch (error) {
-      console.error('OIDC callback failed:', error);
-      throw error;
-    }
-  };
+
 
   // 登录
   const login = async () => {
@@ -146,31 +128,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
-  // 处理URL中的OIDC回调
+  // 初始化认证状态
   useEffect(() => {
-    const handleURLCallback = async () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get('code');
-      const state = urlParams.get('state');
-      
-      if (code && state) {
-        try {
-          setIsLoading(true);
-          await handleOIDCCallback(code, state);
-        } catch (error) {
-          console.error('URL callback handling failed:', error);
-          // 可以在这里显示错误消息
-        } finally {
-          setIsLoading(false);
-        }
-        return;
-      }
-      
-      // 如果不是回调，执行正常的初始化
+    const initializeAuthState = async () => {
       await initializeAuth();
     };
 
-    handleURLCallback();
+    initializeAuthState();
   }, []);
 
   // 定期检查token有效性
@@ -195,6 +159,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     login,
     logout,
     refreshToken,
+    // Export setter functions for manual state updates
+    setUser,
+    setToken,
+    setAuthType,
+    setIsAuthenticated,
   };
 
   return (
